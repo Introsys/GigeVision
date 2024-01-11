@@ -7,6 +7,9 @@ using System.Threading;
 using System.Threading.Tasks;
 using GigeVision.Core.Models;
 using GigeVision.Core.Interfaces;
+using System.Collections.Generic;
+using System.Linq;
+using System.Diagnostics;
 
 namespace GigeVision.Core.Services
 {
@@ -158,7 +161,7 @@ namespace GigeVision.Core.Services
                 buffer[0] = new byte[GvspInfo.RawImageSize];
                 buffer[1] = new byte[GvspInfo.RawImageSize];
                 Span<byte> singlePacket = stackalloc byte[GvspInfo.PacketLength];
-
+                List<int> packetIDs = new List<int>();
                 while (IsReceiving)
                 {
                     length = socketRxRaw.Receive(singlePacket);
@@ -166,6 +169,7 @@ namespace GigeVision.Core.Services
                     {
                         packetRxCount++;
                         packetID = (singlePacket[GvspInfo.PacketIDIndex] << 8) | singlePacket[GvspInfo.PacketIDIndex + 1];
+                        packetIDs.Add(packetID);
                         bufferStart = (packetID - 1) * GvspInfo.PayloadSize; //This use buffer length of regular packet
                         bufferLength = length - GvspInfo.PayloadOffset;  //This will only change for final packet
                         singlePacket.Slice(GvspInfo.PayloadOffset, bufferLength).CopyTo(buffer[bufferIndex].AsSpan().Slice(bufferStart, bufferLength));
@@ -184,6 +188,8 @@ namespace GigeVision.Core.Services
                         Array.Resize(ref blockID, 8);
                         imageID = BitConverter.ToUInt64(blockID);
                         packetRxCountClone = packetRxCount;
+                        bool IsValid = Enumerable.Range(1, 2048).SequenceEqual(packetIDs);
+                        packetIDs.Clear();
                         lastImageIDClone = lastImageID;
                         bufferIndexClone = bufferIndex;
                         bufferIndex = bufferIndex == 0 ? 1 : 0; //Swaping buffer
@@ -193,10 +199,10 @@ namespace GigeVision.Core.Services
                         Task.Run(() =>
                         {
                             //Checking if we receive all packets
-                            if (Math.Abs(packetRxCountClone - GvspInfo.FinalPacketID) <= MissingPacketTolerance)
+                            if (IsValid && Math.Abs(packetRxCountClone - GvspInfo.FinalPacketID) <= MissingPacketTolerance)
                             {
                                 ++frameCounter;
-                                FrameReady?.Invoke(imageID, buffer[bufferIndex]);
+                                FrameReady?.Invoke(imageID, buffer[bufferIndexClone]);
                             }
                             else
                             {
